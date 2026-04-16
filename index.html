@@ -1,0 +1,1868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ostracoda Taxonomy Change Explorer</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  :root {
+    --bg: #f8f9fa;
+    --panel-bg: #ffffff;
+    --border: #dee2e6;
+    --text: #212529;
+    --text-muted: #6c757d;
+    --accent: #0d6efd;
+    --accent-light: #e7f1ff;
+    --green: #198754;
+    --red: #dc3545;
+    --orange: #fd7e14;
+    --purple: #6f42c1;
+    --teal: #20c997;
+    --yellow: #ffc107;
+    --pink: #d63384;
+    --cyan: #0dcaf0;
+    --phylo-color: #0d6efd;
+    --rank-color: #6f42c1;
+    --namefix-color: #fd7e14;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  /* ─── Layout ─── */
+  #app {
+    display: grid;
+    grid-template-columns: 320px 1fr 380px;
+    grid-template-rows: 56px 1fr 36px;
+    height: 100vh;
+    gap: 0;
+  }
+
+  /* ─── Header ─── */
+  #header {
+    grid-column: 1 / -1;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+  #header h1 { font-size: 18px; font-weight: 600; white-space: nowrap; }
+  #header .subtitle { font-size: 12px; opacity: 0.7; }
+  #search-box {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    background: rgba(255,255,255,0.12);
+    border-radius: 6px;
+    padding: 0 10px;
+  }
+  #search-box input {
+    background: transparent;
+    border: none;
+    color: #fff;
+    padding: 6px 8px;
+    font-size: 13px;
+    width: 220px;
+    outline: none;
+  }
+  #search-box input::placeholder { color: rgba(255,255,255,0.5); }
+  #search-results {
+    position: absolute;
+    top: 50px;
+    right: 20px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    max-height: 400px;
+    overflow-y: auto;
+    width: 360px;
+    z-index: 100;
+    display: none;
+  }
+  .search-item {
+    padding: 10px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 13px;
+  }
+  .search-item:hover { background: var(--accent-light); }
+  .search-item .name { font-weight: 600; color: var(--text); }
+  .search-item .meta { color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+
+  /* ─── Left Panel: Taxonomy Tree ─── */
+  #left-panel {
+    background: var(--panel-bg);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 12px 0;
+  }
+  #left-panel h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    padding: 0 14px 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+
+  .tree-node {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px 4px 0;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1.4;
+    transition: background 0.1s;
+    user-select: none;
+  }
+  .tree-node:hover { background: #f1f3f5; }
+  .tree-node.selected { background: var(--accent-light); }
+  .tree-node .toggle {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .tree-node .toggle.has-children { cursor: pointer; }
+  .tree-node .toggle.has-children:hover { color: var(--accent); }
+  .tree-node .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-right: 6px;
+  }
+  .tree-node .node-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tree-node .node-name em { font-style: italic; }
+  .tree-node .rank-badge {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: #e9ecef;
+    color: var(--text-muted);
+    margin-left: 4px;
+    flex-shrink: 0;
+  }
+  .tree-node .child-count {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-left: 4px;
+  }
+  .tree-loading {
+    padding: 4px 14px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  /* ─── Center: D3 Visualization ─── */
+  #center-panel {
+    position: relative;
+    overflow: hidden;
+    background: #fafbfc;
+  }
+  #viz-container { width: 100%; height: 100%; }
+  #viz-container svg { width: 100%; height: 100%; }
+
+  /* Viz controls — two rows */
+  #viz-controls {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    z-index: 5;
+  }
+  #viz-controls .row { display: flex; gap: 6px; }
+  .viz-btn {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .viz-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .viz-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .viz-btn.active-phylo { background: var(--phylo-color); color: #fff; border-color: var(--phylo-color); }
+  .viz-btn.active-rank { background: var(--rank-color); color: #fff; border-color: var(--rank-color); }
+  .viz-btn.active-namefix { background: var(--namefix-color); color: #fff; border-color: var(--namefix-color); }
+
+  /* Filter bar */
+  #filter-bar {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    right: 10px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    z-index: 5;
+  }
+  .filter-chip {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 4px 12px;
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  }
+  .filter-chip .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .filter-chip.active { border-color: #333; font-weight: 600; }
+  .filter-chip.dimmed { opacity: 0.4; }
+
+  /* ─── Right Panel: Detail ─── */
+  #right-panel {
+    background: var(--panel-bg);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 16px;
+  }
+  #detail-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 14px;
+    text-align: center;
+    padding: 40px;
+  }
+  #detail-content { display: none; }
+  #detail-content.visible { display: block; }
+
+  .detail-header { margin-bottom: 16px; }
+  .detail-header .sci-name {
+    font-size: 20px;
+    font-weight: 700;
+    font-style: italic;
+  }
+  .detail-header .authority {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .detail-header .aphia-link {
+    font-size: 12px;
+    color: var(--accent);
+    text-decoration: none;
+    margin-top: 4px;
+    display: inline-block;
+  }
+  .detail-header .aphia-link:hover { text-decoration: underline; }
+
+  .status-banner {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    margin: 8px 0 16px;
+  }
+  .status-banner.accepted { background: #d1e7dd; color: #0f5132; }
+  .status-banner.unaccepted { background: #f8d7da; color: #842029; }
+  .status-banner.other { background: #fff3cd; color: #664d03; }
+
+  .detail-section {
+    margin-bottom: 20px;
+  }
+  .detail-section h3 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .info-grid {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 4px 8px;
+    font-size: 13px;
+  }
+  .info-grid .label { color: var(--text-muted); }
+  .info-grid .value { font-weight: 500; }
+
+  .env-badges { display: flex; gap: 4px; flex-wrap: wrap; }
+  .env-badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .env-badge.marine { background: #cfe2ff; color: #084298; }
+  .env-badge.brackish { background: #d1e7dd; color: #0f5132; }
+  .env-badge.fresh { background: #e0cffc; color: #3d0a7e; }
+  .env-badge.terrestrial { background: #fff3cd; color: #664d03; }
+  .env-badge.extinct { background: #f8d7da; color: #842029; }
+
+  /* Synonym / change cards */
+  .change-card {
+    background: #f8f9fa;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    transition: border-color 0.15s;
+    cursor: pointer;
+  }
+  .change-card:hover { border-color: var(--accent); }
+  .change-card .syn-name { font-weight: 600; font-style: italic; }
+  .change-card .syn-authority { color: var(--text-muted); font-size: 12px; }
+  .change-card .syn-reason {
+    margin-top: 4px;
+    font-size: 11px;
+    padding: 2px 8px;
+    background: #fee2e2;
+    color: #991b1b;
+    border-radius: 4px;
+    display: inline-block;
+  }
+  .change-card .arrow-to {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--green);
+  }
+
+  .timeline-chart { margin-top: 8px; }
+  .timeline-chart svg { overflow: visible; }
+
+  /* ─── Footer ─── */
+  #footer {
+    grid-column: 1 / -1;
+    background: #e9ecef;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    font-size: 11px;
+    color: var(--text-muted);
+    gap: 16px;
+  }
+  #footer .stats { display: flex; gap: 12px; }
+  #footer .stat-item { display: flex; align-items: center; gap: 4px; }
+  #footer .stat-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+  /* ─── D3 node styles ─── */
+  .node circle { stroke-width: 2px; cursor: pointer; }
+  .node circle:hover { filter: brightness(0.9); }
+  .node text { font-size: 11px; fill: var(--text); pointer-events: none; }
+  .link { fill: none; stroke: #d0d5dd; stroke-width: 1.5px; }
+  .link.has-changes { stroke: var(--orange); stroke-width: 2px; stroke-dasharray: 4,3; }
+
+  /* Ghost nodes for reclassification arrows */
+  .ghost-node circle {
+    stroke-dasharray: 4,3;
+    opacity: 0.7;
+    cursor: pointer;
+  }
+  .ghost-link {
+    fill: none;
+    stroke-width: 2px;
+  }
+
+  /* Rank level labels */
+  .rank-level-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    fill: #adb5bd;
+    font-weight: 600;
+    pointer-events: none;
+  }
+  .rank-level-line {
+    stroke: #e9ecef;
+    stroke-width: 1;
+    stroke-dasharray: 3,3;
+  }
+
+  /* Tooltip */
+  #tooltip {
+    position: fixed;
+    background: #1a1a2e;
+    color: #fff;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 200;
+    display: none;
+    max-width: 300px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  #tooltip .tt-name { font-weight: 600; font-style: italic; }
+  #tooltip .tt-rank { opacity: 0.7; font-size: 11px; }
+  #tooltip .tt-status { margin-top: 3px; font-size: 11px; }
+
+  /* Loading overlay */
+  #loading-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(255,255,255,0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 500;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #e9ecef;
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading-text { font-size: 14px; color: var(--text-muted); }
+
+  /* Change type mini-tags in tree sidebar */
+  .change-tag {
+    display: inline-block;
+    font-size: 8px;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #fff;
+    margin-left: 2px;
+    line-height: 1.3;
+    flex-shrink: 0;
+  }
+  .change-tag.phylo { background: var(--phylo-color); }
+  .change-tag.rank-ch { background: var(--rank-color); }
+  .change-tag.namefix { background: var(--namefix-color); }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="header">
+    <div>
+      <h1>Ostracoda Taxonomy Explorer</h1>
+      <div class="subtitle">Interactive taxonomy change history — powered by WoRMS</div>
+    </div>
+    <div id="search-box">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+      </svg>
+      <input type="text" id="search-input" placeholder="Search taxa by name...">
+    </div>
+    <div id="search-results"></div>
+  </div>
+
+  <div id="left-panel">
+    <h2>Taxonomy Tree</h2>
+    <div id="tree-container"></div>
+  </div>
+
+  <div id="center-panel">
+    <div id="viz-controls">
+      <div class="row">
+        <button class="viz-btn active" data-mode="tree" onclick="switchVizMode('tree')">Tree</button>
+        <button class="viz-btn" data-mode="radial" onclick="switchVizMode('radial')">Radial</button>
+        <button class="viz-btn" data-mode="sunburst" onclick="switchVizMode('sunburst')">Sunburst</button>
+        <button class="viz-btn" onclick="resetZoom()">Reset</button>
+        <button class="viz-btn" onclick="expandAll()">Expand All</button>
+        <button class="viz-btn" onclick="collapseToFamily()">Collapse to Family</button>
+      </div>
+      <div class="row">
+        <button class="viz-btn active" data-change="explore" onclick="switchChangeMode('explore')">Explore</button>
+        <button class="viz-btn" data-change="phylo" onclick="switchChangeMode('phylo')">
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--phylo-color);display:inline-block;"></span>
+          Phylogenetic
+        </button>
+        <button class="viz-btn" data-change="rank" onclick="switchChangeMode('rank')">
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--rank-color);display:inline-block;"></span>
+          Rank
+        </button>
+        <button class="viz-btn" data-change="namefix" onclick="switchChangeMode('namefix')">
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--namefix-color);display:inline-block;"></span>
+          Name fix
+        </button>
+      </div>
+    </div>
+    <div id="viz-container"></div>
+    <div id="filter-bar"></div>
+  </div>
+
+  <div id="right-panel">
+    <div id="detail-placeholder">
+      <div>
+        <div style="font-size:48px; margin-bottom:12px;">&#128270;</div>
+        <div style="font-weight:600; margin-bottom:4px;">Select a taxon</div>
+        <div>Click any node in the tree or visualization to see its taxonomy change history</div>
+      </div>
+    </div>
+    <div id="detail-content"></div>
+  </div>
+
+  <div id="footer">
+    <span>Data source: <a href="https://www.marinespecies.org/ostracoda/" target="_blank" style="color:var(--accent);">World Ostracoda Database</a> (WoRMS)</span>
+    <div class="stats" id="footer-stats"></div>
+    <span id="loading-status" style="margin-left:auto;"></span>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <div id="loading-text">Loading Ostracoda taxonomy...</div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+// Local data store (pre-baked JSON)
+// ════════════════════════════════════════════════════════════
+const OSTRACODA_ID = 1078;
+const DATA_URL = "data/ostracoda_all_records.json";
+
+// In-memory index
+const recordById = new Map();             // AphiaID -> raw record
+const childrenByParent = new Map();       // parentNameUsageID -> [record, ...]
+let dataLoaded = false;
+
+async function loadLocalData() {
+  const resp = await fetch(DATA_URL);
+  if (!resp.ok) throw new Error("Failed to fetch " + DATA_URL);
+  const records = await resp.json();
+  records.forEach(r => {
+    const id = r.AphiaID;
+    if (id != null) recordById.set(id, r);
+  });
+  records.forEach(r => {
+    const pid = r.parentNameUsageID;
+    if (pid != null) {
+      if (!childrenByParent.has(pid)) childrenByParent.set(pid, []);
+      childrenByParent.get(pid).push(r);
+    }
+  });
+  dataLoaded = true;
+  const el = document.getElementById("loading-status");
+  if (el) el.textContent = "Records loaded: " + records.length;
+  return records.length;
+}
+
+function updateLoadingStatus() {
+  // No-op: kept for compatibility
+}
+
+// Synchronous lookups (replace old async API calls)
+function fetchRecord(id) { return recordById.get(id) || null; }
+
+function fetchChildren(id) {
+  return childrenByParent.get(id) || [];
+}
+
+function fetchSynonyms(id) {
+  // All records with valid_AphiaID == id and status != "accepted" are synonyms/old-forms of id
+  const out = [];
+  recordById.forEach(r => {
+    if (r.valid_AphiaID === id && r.AphiaID !== id && r.status !== "accepted") {
+      out.push(r);
+    }
+  });
+  return out;
+}
+
+function searchTaxa(query) {
+  const q = query.toLowerCase();
+  const out = [];
+  recordById.forEach(r => {
+    if ((r.scientificname || "").toLowerCase().includes(q)) out.push(r);
+  });
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════
+// Classification helpers
+// ════════════════════════════════════════════════════════════
+const STATUS_COLORS = {
+  "accepted": "#198754", "unaccepted": "#dc3545", "nomen nudum": "#fd7e14",
+  "nomen dubium": "#fd7e14", "temporary name": "#6c757d",
+  "alternate representation": "#6f42c1", "taxon inquirendum": "#d63384",
+  "interim unpublished": "#adb5bd", "uncertain": "#ffc107", "nomen oblitum": "#e67700",
+};
+
+function getStatusColor(status) {
+  if (!status) return "#adb5bd";
+  const s = status.toLowerCase();
+  if (STATUS_COLORS[s]) return STATUS_COLORS[s];
+  if (s.includes("synonym")) return "#dc3545";
+  if (s.includes("supersed")) return "#fd7e14";
+  if (s.includes("accepted")) return "#198754";
+  return "#adb5bd";
+}
+
+function getStatusClass(status) {
+  if (!status) return "other";
+  const s = status.toLowerCase();
+  if (s === "accepted") return "accepted";
+  if (s.includes("unaccepted") || s.includes("synonym")) return "unaccepted";
+  return "other";
+}
+
+const RANK_ORDER = [
+  "Class","Subclass","Infraclass","Superorder","Order",
+  "Suborder","Infraorder","Superfamily","Family","Subfamily",
+  "Tribe","Genus","Subgenus","Species","Subspecies"
+];
+
+function rankSize(rank) {
+  // Legacy fallback for radial/sunburst; tree uses childCountSize()
+  const idx = RANK_ORDER.indexOf(rank);
+  return idx === -1 ? 6 : Math.max(4, 14 - idx * 0.7);
+}
+
+function childCountSize(node) {
+  // Node size based on number of direct children (loaded)
+  var n = (node._childrenLoaded && node.children) ? node.children.length : 0;
+  if (n === 0) return 4;
+  // Scale: log-based so 1 child ~ 5px, 10 ~ 8px, 100 ~ 11px, 1000 ~ 14px
+  return Math.min(16, 4 + Math.log2(n + 1) * 2);
+}
+
+function isHighRank(rank) {
+  return ["Class","Subclass","Infraclass","Superorder","Order","Suborder","Infraorder","Superfamily","Family","Subfamily"].includes(rank);
+}
+
+// ── Change-type classification ──
+// Explicit mapping from WoRMS status -> change type (covers all 22 statuses
+// observed in the full Ostracoda dataset). null = not a taxonomic change.
+const STATUS_TO_CHANGE_TYPE = {
+  "accepted": null,
+  // PHYLO: placement/combination changes
+  "superseded combination": "phylo",
+  "alternative representation": "phylo",
+  "alternate representation": "phylo",
+  // RANK: rank promoted/demoted
+  "superseded rank": "rank",
+  // NAMEFIX: synonyms, misspellings, nomenclatural fixes
+  "unaccepted": "namefix",
+  "junior subjective synonym": "namefix",
+  "junior objective synonym": "namefix",
+  "junior homonym": "namefix",
+  "unreplaced junior homonym": "namefix",
+  "misspelling - incorrect subsequent spelling": "namefix",
+  "misspelling - incorrect original spelling": "namefix",
+  "unjustified emendation": "namefix",
+  "incorrect grammatical agreement of specific epithet": "namefix",
+  "misapplication": "namefix",
+  "nomen nudum": "namefix",
+  "nomen dubium": "namefix",
+  "nomen oblitum": "namefix",
+  "unavailable name": "namefix",
+  "temporary name": "namefix",
+  "interim unpublished": "namefix",
+  "unassessed": "namefix",
+  "taxon inquirendum": "namefix",
+};
+
+function classifyChange(child) {
+  const status = (child.status || "").toLowerCase();
+  if (status in STATUS_TO_CHANGE_TYPE) return STATUS_TO_CHANGE_TYPE[status];
+  // Fallback: any non-accepted unknown status -> namefix
+  if (status && status !== "accepted") return "namefix";
+  return null;
+}
+
+function countChanges(node) {
+  if (!node._childrenLoaded) return { phylo: 0, rank: 0, namefix: 0 };
+  let phylo = 0, rank = 0, namefix = 0;
+  node.children.forEach(c => {
+    const t = classifyChange(c);
+    if (t === "phylo") phylo++;
+    else if (t === "rank") rank++;
+    else if (t === "namefix") namefix++;
+  });
+  return { phylo, rank, namefix };
+}
+
+const CHANGE_COLORS = {
+  phylo: "var(--phylo-color)",
+  rank: "var(--rank-color)",
+  namefix: "var(--namefix-color)",
+};
+
+// ════════════════════════════════════════════════════════════
+// Data store
+// ════════════════════════════════════════════════════════════
+const nodeMap = new Map();
+let rootNode = null;
+let selectedNode = null;
+let vizMode = "tree";
+let changeMode = "explore"; // "explore" | "phylo" | "rank" | "namefix"
+
+// Search focus: highlighted AphiaIDs + arrows when user navigates via search
+let searchFocusIds = new Set();   // AphiaIDs to highlight (ancestors + target + related)
+let searchArrows = [];            // [{sourceId, targetId, type}] arrows to draw
+
+const activeFilters = new Set();
+const allStatuses = new Set();
+
+function extractFields(r) {
+  return {
+    id: r.AphiaID, AphiaID: r.AphiaID, name: r.scientificname,
+    authority: r.authority, rank: r.rank, status: r.status,
+    unacceptreason: r.unacceptreason, valid_AphiaID: r.valid_AphiaID,
+    valid_name: r.valid_name, valid_authority: r.valid_authority,
+    parentId: r.parentNameUsageID,
+    isMarine: r.isMarine, isBrackish: r.isBrackish,
+    isFreshwater: r.isFreshwater, isTerrestrial: r.isTerrestrial,
+    isExtinct: r.isExtinct, modified: r.modified, lsid: r.lsid,
+  };
+}
+
+function createNode(record) {
+  const id = record.AphiaID;
+  if (nodeMap.has(id)) {
+    Object.assign(nodeMap.get(id), extractFields(record));
+    return nodeMap.get(id);
+  }
+  const node = {
+    ...extractFields(record),
+    children: [], synonyms: [],
+    _childrenLoaded: false, _synonymsLoaded: false, _expanded: false,
+  };
+  nodeMap.set(id, node);
+  return node;
+}
+
+async function loadChildren(node) {
+  if (node._childrenLoaded) return;
+  node._childrenLoaded = true;
+  const children = await fetchChildren(node.AphiaID);
+  node.children = children.map(c => createNode(c));
+  node.children.forEach(c => allStatuses.add(c.status));
+  updateFilterChips();
+}
+
+async function loadSynonyms(node) {
+  if (node._synonymsLoaded) return;
+  node._synonymsLoaded = true;
+  const syns = await fetchSynonyms(node.AphiaID);
+  node.synonyms = syns.map(extractFields);
+}
+
+function filterChildren(children) {
+  if (activeFilters.size === 0) return children;
+  return children.filter(c => activeFilters.has(c.status));
+}
+
+// ════════════════════════════════════════════════════════════
+// Expand / Collapse controls
+// ════════════════════════════════════════════════════════════
+var EXPAND_RANKS = new Set([
+  "Class","Subclass","Infraclass","Superorder","Order",
+  "Suborder","Infraorder","Superfamily"
+]);
+
+function expandAll() {
+  nodeMap.forEach(function(node) {
+    if (!node._childrenLoaded) loadChildren(node);
+    node._expanded = true;
+  });
+  renderTreePanel();
+  updateVisualization();
+}
+
+function collapseToFamily() {
+  nodeMap.forEach(function(node) {
+    node._expanded = EXPAND_RANKS.has(node.rank) || !node.rank;
+  });
+  renderTreePanel();
+  updateVisualization();
+}
+
+// ════════════════════════════════════════════════════════════
+// Change mode
+// ════════════════════════════════════════════════════════════
+function switchChangeMode(mode) {
+  changeMode = mode;
+  searchFocusIds = new Set();
+  searchArrows = [];
+  document.querySelectorAll('[data-change]').forEach(btn => {
+    const m = btn.dataset.change;
+    if (m === mode) {
+      if (m === "phylo") btn.className = "viz-btn active-phylo";
+      else if (m === "rank") btn.className = "viz-btn active-rank";
+      else if (m === "namefix") btn.className = "viz-btn active-namefix";
+      else btn.className = "viz-btn active";
+    } else {
+      btn.className = "viz-btn";
+    }
+  });
+  updateVisualization();
+}
+
+// ════════════════════════════════════════════════════════════
+// Tree Panel (left sidebar)
+// ════════════════════════════════════════════════════════════
+function renderTreePanel() {
+  const container = document.getElementById("tree-container");
+  container.innerHTML = "";
+  if (rootNode) renderTreeNode(container, rootNode, 0);
+}
+
+function renderTreeNode(parent, node, depth) {
+  const div = document.createElement("div");
+  div.className = "tree-node" + (selectedNode && selectedNode.AphiaID === node.AphiaID ? " selected" : "");
+  div.style.paddingLeft = (8 + depth * 16) + "px";
+
+  // Toggle arrow
+  const toggle = document.createElement("span");
+  toggle.className = "toggle";
+  if (node._childrenLoaded && node.children.length === 0 && !isHighRank(node.rank)) {
+    toggle.textContent = "";
+  } else {
+    toggle.className += " has-children";
+    toggle.textContent = node._expanded ? "\u25BC" : "\u25B6";
+  }
+  div.appendChild(toggle);
+
+  // Status dot
+  const dot = document.createElement("span");
+  dot.className = "status-dot";
+  dot.style.background = getStatusColor(node.status);
+  div.appendChild(dot);
+
+  // Name
+  const nameSpan = document.createElement("span");
+  nameSpan.className = "node-name";
+  nameSpan.innerHTML = "<em>" + node.name + "</em>";
+  div.appendChild(nameSpan);
+
+  // Rank badge
+  const badge = document.createElement("span");
+  badge.className = "rank-badge";
+  badge.textContent = node.rank || "?";
+  div.appendChild(badge);
+
+  // Change-type tags
+  if (node._childrenLoaded) {
+    const counts = countChanges(node);
+    if (counts.phylo > 0) {
+      const tag = document.createElement("span");
+      tag.className = "change-tag phylo";
+      tag.textContent = "P" + counts.phylo;
+      tag.title = counts.phylo + " phylogenetic reclassification(s)";
+      div.appendChild(tag);
+    }
+    if (counts.rank > 0) {
+      const tag = document.createElement("span");
+      tag.className = "change-tag rank-ch";
+      tag.textContent = "R" + counts.rank;
+      tag.title = counts.rank + " rank change(s)";
+      div.appendChild(tag);
+    }
+    if (counts.namefix > 0) {
+      const tag = document.createElement("span");
+      tag.className = "change-tag namefix";
+      tag.textContent = "N" + counts.namefix;
+      tag.title = counts.namefix + " name fix(es)";
+      div.appendChild(tag);
+    }
+  }
+
+  // Child count
+  if (node._childrenLoaded && node.children.length > 0) {
+    const count = document.createElement("span");
+    count.className = "child-count";
+    count.textContent = "(" + node.children.length + ")";
+    div.appendChild(count);
+  }
+
+  // Click on toggle arrow (▶/▼): expand/collapse
+  toggle.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!node._childrenLoaded) {
+      const loader = document.createElement("div");
+      loader.className = "tree-loading";
+      loader.textContent = "Loading...";
+      parent.insertBefore(loader, div.nextSibling);
+      await loadChildren(node);
+      if (loader.parentNode) loader.remove();
+    }
+    node._expanded = !node._expanded;
+    selectNode(node);
+    renderTreePanel();
+    updateVisualization();
+  });
+  // Click anywhere else on the row: select node and show info only
+  div.addEventListener("click", (e) => {
+    e.stopPropagation();
+    selectNode(node);
+    renderTreePanel();
+    updateVisualization();
+  });
+
+  parent.appendChild(div);
+
+  if (node._expanded && node._childrenLoaded) {
+    filterChildren(node.children).forEach(child => renderTreeNode(parent, child, depth + 1));
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// Detail Panel (right)
+// ════════════════════════════════════════════════════════════
+async function selectNode(node) {
+  selectedNode = node;
+  await loadSynonyms(node);
+
+  const placeholder = document.getElementById("detail-placeholder");
+  const content = document.getElementById("detail-content");
+  placeholder.style.display = "none";
+  content.className = "visible";
+
+  let html = "";
+
+  // Header
+  html += '<div class="detail-header">';
+  html += '<div class="sci-name">' + node.name + '</div>';
+  html += '<div class="authority">' + (node.authority || "") + '</div>';
+  html += '<a class="aphia-link" href="https://www.marinespecies.org/ostracoda/aphia.php?p=taxdetails&id=' + node.AphiaID + '" target="_blank">AphiaID: ' + node.AphiaID + ' &#x2197;</a>';
+  html += '</div>';
+
+  // Status banner
+  html += '<div class="status-banner ' + getStatusClass(node.status) + '">';
+  html += '<span style="background:' + getStatusColor(node.status) + ';width:10px;height:10px;border-radius:50%;display:inline-block;"></span>';
+  html += (node.status || "Unknown");
+  if (node.unacceptreason) html += ' &mdash; ' + node.unacceptreason;
+  html += '</div>';
+
+  // If unaccepted
+  if (node.valid_AphiaID && node.valid_AphiaID !== node.AphiaID) {
+    html += '<div class="detail-section"><h3>Accepted Name</h3>';
+    html += '<div class="change-card" onclick="navigateToAphia(' + node.valid_AphiaID + ')">';
+    html += '<div class="arrow-to">&rarr; Currently accepted as:</div>';
+    html += '<div class="syn-name">' + (node.valid_name || "?") + '</div>';
+    html += '<div class="syn-authority">' + (node.valid_authority || "") + '</div>';
+    html += '</div></div>';
+  }
+
+  // Classification
+  html += '<div class="detail-section"><h3>Classification</h3><div class="info-grid">';
+  html += '<span class="label">Rank</span><span class="value">' + (node.rank || "?") + '</span>';
+  if (node.modified) html += '<span class="label">Last modified</span><span class="value">' + new Date(node.modified).toLocaleDateString() + '</span>';
+  html += '</div></div>';
+
+  // Environment
+  html += '<div class="detail-section"><h3>Environment</h3><div class="env-badges">';
+  if (node.isMarine) html += '<span class="env-badge marine">Marine</span>';
+  if (node.isBrackish) html += '<span class="env-badge brackish">Brackish</span>';
+  if (node.isFreshwater) html += '<span class="env-badge fresh">Freshwater</span>';
+  if (node.isTerrestrial) html += '<span class="env-badge terrestrial">Terrestrial</span>';
+  if (node.isExtinct) html += '<span class="env-badge extinct">Extinct</span>';
+  html += '</div></div>';
+
+  // ── Children summary ──
+  if (node._childrenLoaded && node.children.length > 0) {
+    html += '<div class="detail-section">';
+    html += '<h3>All Children (' + node.children.length + ')</h3>';
+    var statusCounts = {};
+    node.children.forEach(function(c) { var s = c.status || "unknown"; statusCounts[s] = (statusCounts[s] || 0) + 1; });
+    html += '<div id="children-chart"></div>';
+    html += '<div class="info-grid" style="margin-top:8px;">';
+    Object.entries(statusCounts).sort(function(a,b) { return b[1] - a[1]; }).forEach(function(entry) {
+      html += '<span class="label" style="display:flex;align-items:center;gap:4px;">'
+        + '<span style="width:8px;height:8px;border-radius:50%;background:' + getStatusColor(entry[0]) + ';display:inline-block;"></span>'
+        + entry[0] + '</span>';
+      html += '<span class="value">' + entry[1] + '</span>';
+    });
+    html += '</div></div>';
+  }
+
+  content.innerHTML = html;
+
+  if (node._childrenLoaded && node.children.length > 0) drawChildrenChart(node);
+
+  renderTreePanel();
+  highlightInViz(node);
+}
+
+// ── D3 mini-charts for detail panel ──
+function drawSynonymTimeline(node) {
+  var container = document.getElementById("synonym-timeline");
+  if (!container) return;
+  var items = [], yearRegex = /(\d{4})/;
+  var curMatch = (node.authority || "").match(yearRegex);
+  if (curMatch) items.push({ name: node.name, year: +curMatch[1], current: true, status: node.status });
+  node.synonyms.forEach(function(syn) {
+    var m = (syn.authority || "").match(yearRegex);
+    if (m) items.push({ name: syn.name, year: +m[1], current: false, status: syn.status });
+  });
+  if (items.length < 2) return;
+  items.sort(function(a, b) { return a.year - b.year; });
+  var width = 340, height = 30 + items.length * 28;
+  var margin = { top: 10, right: 20, bottom: 10, left: 10 };
+  var svg = d3.select(container).append("svg").attr("width", width).attr("height", height);
+  var xScale = d3.scaleLinear()
+    .domain([d3.min(items, function(d){return d.year;}) - 5, d3.max(items, function(d){return d.year;}) + 5])
+    .range([margin.left + 60, width - margin.right]);
+  svg.append("g").attr("transform", "translate(0," + margin.top + ")")
+    .call(d3.axisTop(xScale).ticks(5).tickFormat(d3.format("d")))
+    .selectAll("text").style("font-size", "9px");
+  items.forEach(function(item, i) {
+    var y = margin.top + 20 + i * 24, x = xScale(item.year);
+    svg.append("line").attr("x1", margin.left + 60).attr("x2", x).attr("y1", y).attr("y2", y)
+      .attr("stroke", item.current ? getStatusColor(item.status) : "#ddd").attr("stroke-width", item.current ? 2 : 1);
+    svg.append("circle").attr("cx", x).attr("cy", y).attr("r", item.current ? 5 : 4)
+      .attr("fill", getStatusColor(item.status)).attr("stroke", "#fff").attr("stroke-width", 1.5);
+    svg.append("text").attr("x", margin.left + 55).attr("y", y + 3).attr("text-anchor", "end")
+      .style("font-size", "10px").style("font-style", "italic").style("fill", item.current ? "#000" : "#888")
+      .text(item.name.length > 12 ? item.name.substring(0, 12) + "\u2026" : item.name);
+  });
+}
+
+function drawChildrenChart(node) {
+  var container = document.getElementById("children-chart");
+  if (!container) return;
+  var statusCounts = {};
+  node.children.forEach(function(c) { var s = c.status || "unknown"; statusCounts[s] = (statusCounts[s] || 0) + 1; });
+  var data = Object.entries(statusCounts).map(function(e) { return { status: e[0], count: e[1], color: getStatusColor(e[0]) }; })
+    .sort(function(a,b) { return b.count - a.count; });
+  var width = 340, height = 24, total = node.children.length;
+  var svg = d3.select(container).append("svg").attr("width", width).attr("height", height);
+  var x = 0;
+  data.forEach(function(d) {
+    var w = (d.count / total) * width;
+    svg.append("rect").attr("x", x).attr("y", 0).attr("width", w).attr("height", height)
+      .attr("rx", x === 0 ? 4 : 0).attr("fill", d.color).attr("opacity", 0.8);
+    if (w > 30) svg.append("text").attr("x", x + w/2).attr("y", height/2+1)
+      .attr("text-anchor", "middle").attr("dominant-baseline", "central")
+      .style("font-size", "10px").style("fill", "#fff").style("font-weight", "600").text(d.count);
+    x += w;
+  });
+}
+
+function drawTransferChart(node) {
+  var container = document.getElementById("transfer-chart");
+  if (!container) return;
+  var transfers = [];
+  node.children.forEach(function(c) {
+    if (c.status === "accepted") return;
+    var origGenus = (c.name || "").split(/[\s(]/)[0];
+    var validGenus = (c.valid_name || "").split(/[\s(]/)[0];
+    if (origGenus && validGenus && origGenus !== validGenus) transfers.push({ from: origGenus, to: validGenus });
+  });
+  if (transfers.length === 0) return;
+  var targetCounts = {};
+  transfers.forEach(function(t) { targetCounts[t.to] = (targetCounts[t.to] || 0) + 1; });
+  var targets = Object.entries(targetCounts).sort(function(a,b) { return b[1] - a[1]; }).slice(0, 12);
+  var width = 340, barH = 20, gap = 3, height = 36 + targets.length * (barH + gap), maxCount = targets[0][1];
+  var svg = d3.select(container).append("svg").attr("width", width).attr("height", height);
+  svg.append("text").attr("x", 0).attr("y", 12).style("font-size", "11px").style("fill", "var(--phylo-color)").style("font-weight", "600").text("Species transferred to:");
+  svg.append("text").attr("x", 0).attr("y", 28).style("font-size", "10px").style("fill", "#999").style("font-style", "italic").text(node.name + " \u2192");
+  targets.forEach(function(entry, i) {
+    var genus = entry[0], count = entry[1], y = 36 + i * (barH + gap);
+    var barW = (count / maxCount) * (width - 130);
+    svg.append("rect").attr("x", 120).attr("y", y).attr("width", barW).attr("height", barH).attr("rx", 3).attr("fill", "var(--phylo-color)").attr("opacity", 0.7);
+    svg.append("text").attr("x", 115).attr("y", y + barH/2 + 1).attr("text-anchor", "end").attr("dominant-baseline", "central")
+      .style("font-size", "10px").style("font-style", "italic").style("fill", "#333")
+      .text(genus.length > 16 ? genus.substring(0, 14) + "\u2026" : genus);
+    svg.append("text").attr("x", 120 + barW + 4).attr("y", y + barH/2 + 1).attr("dominant-baseline", "central")
+      .style("font-size", "10px").style("fill", "var(--phylo-color)").style("font-weight", "600").text(count);
+  });
+}
+
+async function navigateToAphia(aphiaId) {
+  var record = fetchRecord(aphiaId);
+  if (!record) return;
+
+  // Build ancestor chain from root to this record using parentNameUsageID
+  var chain = [];
+  var cur = record;
+  while (cur) {
+    chain.unshift(cur.AphiaID);
+    if (cur.AphiaID === OSTRACODA_ID) break;
+    var parent = fetchRecord(cur.parentNameUsageID);
+    if (!parent || parent.AphiaID === cur.AphiaID) break;
+    cur = parent;
+  }
+
+  // Walk the chain, ensuring each ancestor is loaded & expanded in the tree
+  for (var i = 0; i < chain.length; i++) {
+    var nid = chain[i];
+    var existing = nodeMap.get(nid);
+    if (!existing) {
+      // Node not yet in tree — its parent should be; load parent's children
+      var parentId = fetchRecord(nid) ? fetchRecord(nid).parentNameUsageID : null;
+      var parentNode = parentId ? nodeMap.get(parentId) : null;
+      if (parentNode) {
+        await loadChildren(parentNode);
+        parentNode._expanded = true;
+      }
+      existing = nodeMap.get(nid);
+    }
+    if (existing && i < chain.length - 1) {
+      await loadChildren(existing);
+      existing._expanded = true;
+    }
+  }
+
+  // Load & expand the target node itself
+  var targetNode = nodeMap.get(aphiaId);
+  if (!targetNode) {
+    targetNode = createNode(record);
+  }
+  await loadChildren(targetNode);
+  targetNode._expanded = true;
+
+  // Also ensure related nodes are visible:
+  // 1. If this is a non-accepted record, expand toward its valid_AphiaID target
+  if (record.valid_AphiaID && record.valid_AphiaID !== aphiaId) {
+    await navigateEnsureVisible(record.valid_AphiaID);
+  }
+  // 2. Show old records that point TO this node
+  var oldRecords = fetchSynonyms(aphiaId);
+  for (var j = 0; j < oldRecords.length; j++) {
+    await navigateEnsureVisible(oldRecords[j].AphiaID);
+  }
+
+  // ── Build search focus: highlight ancestors + target + related nodes ──
+  searchFocusIds = new Set(chain);  // ancestors
+  searchFocusIds.add(aphiaId);      // the searched node
+  searchArrows = [];
+
+  // If non-accepted, add arrow to valid target
+  if (record.valid_AphiaID && record.valid_AphiaID !== aphiaId) {
+    searchFocusIds.add(record.valid_AphiaID);
+    var ct = classifyChange(record) || "namefix";
+    searchArrows.push({ sourceId: aphiaId, targetId: record.valid_AphiaID, type: ct });
+    // Also add the valid target's ancestor chain
+    var vr = fetchRecord(record.valid_AphiaID);
+    var vc = vr;
+    while (vc) {
+      searchFocusIds.add(vc.AphiaID);
+      if (vc.AphiaID === OSTRACODA_ID) break;
+      var vp = fetchRecord(vc.parentNameUsageID);
+      if (!vp || vp.AphiaID === vc.AphiaID) break;
+      vc = vp;
+    }
+  }
+  // Old records pointing to this node
+  for (var j = 0; j < oldRecords.length; j++) {
+    var oldRec = oldRecords[j];
+    searchFocusIds.add(oldRec.AphiaID);
+    var oct = classifyChange(oldRec) || "namefix";
+    searchArrows.push({ sourceId: oldRec.AphiaID, targetId: aphiaId, type: oct });
+    // Add old record's ancestor chain
+    var oc = oldRec;
+    while (oc) {
+      searchFocusIds.add(oc.AphiaID);
+      if (oc.AphiaID === OSTRACODA_ID) break;
+      var op = fetchRecord(oc.parentNameUsageID);
+      if (!op || op.AphiaID === oc.AphiaID) break;
+      oc = op;
+    }
+  }
+
+  selectNode(targetNode);
+  renderTreePanel();
+  updateVisualization();
+}
+
+// Ensure a node is visible in the tree (expand its ancestor path) without selecting it
+async function navigateEnsureVisible(aphiaId) {
+  var record = fetchRecord(aphiaId);
+  if (!record) return;
+  var chain = [];
+  var cur = record;
+  while (cur) {
+    chain.unshift(cur.AphiaID);
+    if (cur.AphiaID === OSTRACODA_ID) break;
+    var parent = fetchRecord(cur.parentNameUsageID);
+    if (!parent || parent.AphiaID === cur.AphiaID) break;
+    cur = parent;
+  }
+  for (var i = 0; i < chain.length; i++) {
+    var nid = chain[i];
+    var existing = nodeMap.get(nid);
+    if (!existing) {
+      var parentId = fetchRecord(nid) ? fetchRecord(nid).parentNameUsageID : null;
+      var parentNode = parentId ? nodeMap.get(parentId) : null;
+      if (parentNode) {
+        await loadChildren(parentNode);
+        parentNode._expanded = true;
+      }
+      existing = nodeMap.get(nid);
+    }
+    if (existing) {
+      await loadChildren(existing);
+      existing._expanded = true;
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// D3 Visualization
+// ════════════════════════════════════════════════════════════
+var svg, g, zoomBehavior;
+
+function initVisualization() {
+  var container = document.getElementById("viz-container");
+  var rect = container.getBoundingClientRect();
+  svg = d3.select(container).append("svg").attr("width", rect.width).attr("height", rect.height);
+
+  // Arrow markers for ghost links — one per change type color
+  var defs = svg.append("defs");
+  [["arrowhead-phylo", "#0d6efd"], ["arrowhead-rank", "#6f42c1"], ["arrowhead-namefix", "#fd7e14"]].forEach(function(pair) {
+    defs.append("marker").attr("id", pair[0])
+      .attr("viewBox", "0 0 10 7").attr("refX", 10).attr("refY", 3.5)
+      .attr("markerWidth", 8).attr("markerHeight", 6).attr("orient", "auto")
+      .append("polygon").attr("points", "0 0, 10 3.5, 0 7").attr("fill", pair[1]);
+  });
+
+  g = svg.append("g");
+  zoomBehavior = d3.zoom().scaleExtent([0.1, 4]).on("zoom", function(event) { g.attr("transform", event.transform); });
+  svg.call(zoomBehavior);
+  window.addEventListener("resize", function() {
+    var r = container.getBoundingClientRect();
+    svg.attr("width", r.width).attr("height", r.height);
+    updateVisualization();
+  });
+}
+
+function resetZoom() {
+  var container = document.getElementById("viz-container");
+  var rect = container.getBoundingClientRect();
+  if (vizMode === "tree") {
+    svg.transition().duration(500).call(zoomBehavior.transform, d3.zoomIdentity.translate(40, rect.height / 2).scale(0.75));
+  } else {
+    svg.transition().duration(500).call(zoomBehavior.transform, d3.zoomIdentity);
+  }
+}
+
+function switchVizMode(mode) {
+  vizMode = mode;
+  searchFocusIds = new Set();
+  searchArrows = [];
+  document.querySelectorAll('[data-mode]').forEach(function(btn) {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+  updateVisualization();
+  resetZoom();
+}
+
+function getVisibleTree() {
+  function buildHierarchy(node) {
+    var result = { data: node, children: [] };
+    if (node._expanded && node._childrenLoaded) {
+      result.children = filterChildren(node.children).map(function(c) { return buildHierarchy(c); });
+    }
+    return result;
+  }
+  return rootNode ? buildHierarchy(rootNode) : null;
+}
+
+function updateVisualization() {
+  if (!rootNode || !g) return;
+  g.selectAll("*").remove();
+  var visTree = getVisibleTree();
+  if (!visTree) return;
+  if (vizMode === "tree") drawTreeLayout(visTree);
+  else if (vizMode === "radial") drawRadialLayout(visTree);
+  else if (vizMode === "sunburst") drawSunburstLayout(visTree);
+}
+
+function drawTreeLayout(visTree) {
+  var container = document.getElementById("viz-container");
+  var rect = container.getBoundingClientRect();
+  var root = d3.hierarchy(visTree, function(d) { return d.children; });
+  var leafCount = root.leaves().length;
+  var treeHeight = Math.max(rect.height - 100, leafCount * 22);
+  // ── Fixed rank columns ──
+  // Collect all ranks present in the visible tree
+  var presentRanks = new Set();
+  root.descendants().forEach(function(d) {
+    var r = d.data.data.rank;
+    if (r && RANK_ORDER.includes(r)) presentRanks.add(r);
+  });
+  var sortedRanks = RANK_ORDER.filter(function(r) { return presentRanks.has(r); });
+  var treeWidth = Math.max(rect.width - 200, sortedRanks.length * 140);
+
+  // Use d3.tree for vertical (x) spacing only
+  d3.tree().size([treeHeight, treeWidth])
+    .separation(function(a, b) { return a.parent === b.parent ? 1 : 2.5; })(root);
+
+  // Assign fixed x-column positions
+  var columnSpacing = sortedRanks.length > 1 ? treeWidth / (sortedRanks.length - 1) : 0;
+  var rankToColumn = {};
+  sortedRanks.forEach(function(r, i) { rankToColumn[r] = i * columnSpacing; });
+
+  // Override each node's y (horizontal) position based on its rank column
+  root.descendants().forEach(function(d) {
+    var r = d.data.data.rank;
+    if (r && rankToColumn[r] != null) {
+      d.y = rankToColumn[r];
+    }
+    // For unknown ranks, keep d3's default y — rare edge case
+  });
+
+  var offsetX = 80;
+  var offsetY = -treeHeight / 2 + rect.height / 2;
+
+  // ── Rank level labels (one per column, no overlap) ──
+  sortedRanks.forEach(function(r) {
+    var colX = rankToColumn[r] + offsetX;
+    // Vertical dashed line
+    g.append("line")
+      .attr("class", "rank-level-line")
+      .attr("x1", colX).attr("x2", colX)
+      .attr("y1", offsetY - 20).attr("y2", offsetY + treeHeight + 20);
+    // Label at top
+    g.append("text")
+      .attr("class", "rank-level-label")
+      .attr("x", colX).attr("y", offsetY - 30)
+      .attr("text-anchor", "middle")
+      .text(r);
+  });
+
+  // ── Links ──
+  g.selectAll(".link")
+    .data(root.links())
+    .join("path")
+    .attr("class", "link")
+    .attr("d", d3.linkHorizontal().x(function(d) { return d.y + offsetX; }).y(function(d) { return d.x + offsetY; }));
+
+  // ── Nodes ──
+  var nodes = g.selectAll(".node")
+    .data(root.descendants())
+    .join("g")
+    .attr("class", "node")
+    .attr("transform", function(d) { return "translate(" + (d.y + offsetX) + "," + (d.x + offsetY) + ")"; })
+    .on("click", function(event, d) {
+      event.stopPropagation();
+      // Delay single click to allow double-click to cancel it
+      var el = this;
+      if (el._clickTimer) clearTimeout(el._clickTimer);
+      el._clickTimer = setTimeout(function() {
+        el._clickTimer = null;
+        searchFocusIds = new Set();
+        searchArrows = [];
+        selectNode(d.data.data);
+        renderTreePanel();
+        updateVisualization();
+      }, 250);
+    })
+    .on("dblclick", async function(event, d) {
+      event.stopPropagation();
+      // Cancel pending single click
+      if (this._clickTimer) { clearTimeout(this._clickTimer); this._clickTimer = null; }
+      var node = d.data.data;
+      if (!node._childrenLoaded) await loadChildren(node);
+      node._expanded = !node._expanded;
+      selectNode(node);
+      renderTreePanel();
+      updateVisualization();
+    })
+    .on("mouseenter", function(event, d) { showTooltip(event, d.data.data); })
+    .on("mouseleave", hideTooltip);
+
+  // Dim nodes: search focus overrides default dimming.
+  // When searchFocusIds is active, only focused nodes are bright; everything else fades.
+  nodes.attr("opacity", function(d) {
+    var id = d.data.data.AphiaID;
+    if (selectedNode && selectedNode.AphiaID === id) return 1;
+    if (searchFocusIds.size > 0) {
+      return searchFocusIds.has(id) ? 1 : 0.12;
+    }
+    return d.data.data.status === "accepted" ? 1 : 0.45;
+  });
+
+  // Node fill/opacity reflect ONLY the node itself — never aggregated from children.
+  nodes.append("circle")
+    .attr("r", function(d) { return childCountSize(d.data.data); })
+    .attr("fill", function(d) {
+      if (changeMode === "explore") return getStatusColor(d.data.data.status);
+      var ct = classifyChange(d.data.data);
+      if (ct === changeMode) {
+        return ct === "phylo" ? "var(--phylo-color)"
+             : ct === "rank"  ? "var(--rank-color)"
+                              : "var(--namefix-color)";
+      }
+      return getStatusColor(d.data.data.status);
+    })
+    .attr("opacity", function(d) {
+      if (changeMode === "explore") return 1;
+      return classifyChange(d.data.data) === changeMode ? 1 : 0.25;
+    })
+    .attr("stroke", function(d) {
+      if (selectedNode && selectedNode.AphiaID === d.data.data.AphiaID) return "#000";
+      return "#fff";
+    })
+    .attr("stroke-width", function(d) {
+      return selectedNode && selectedNode.AphiaID === d.data.data.AphiaID ? 3 : 2;
+    });
+
+  // ── Change-type badge on the changed node itself ──
+  // A node only gets a badge if IT is a non-accepted record with a classified
+  // change type. Parents are NOT annotated with their children's changes.
+  nodes.each(function(d) {
+    var nd = d.data.data;
+    var ct = classifyChange(nd);
+    if (!ct) return;
+    var color = ct === "phylo" ? "var(--phylo-color)"
+              : ct === "rank"  ? "var(--rank-color)"
+                               : "var(--namefix-color)";
+    var label = ct === "phylo" ? "P" : ct === "rank" ? "R" : "N";
+
+    var nodeG = d3.select(this);
+    var bx = childCountSize(nd) + 3;
+    nodeG.append("rect")
+      .attr("x", bx).attr("y", -15)
+      .attr("width", 14).attr("height", 13)
+      .attr("rx", 6).attr("fill", color).attr("stroke", "#fff").attr("stroke-width", 1);
+    nodeG.append("text")
+      .attr("x", bx + 7).attr("y", -6)
+      .attr("text-anchor", "middle")
+      .style("font-size", "8px").style("fill", "#fff").style("font-weight", "bold")
+      .text(label);
+  });
+
+  // ── Cross-tree change arrows ──
+  // Direction: old record (non-accepted, already rendered as a real node)
+  // ──arrow──▶ current accepted record (also a real node, at its valid_AphiaID position).
+  // No ghost duplicates: every node drawn here is an actual record in the database.
+  if (changeMode !== "explore") {
+    // Build a lookup: AphiaID → rendered tree node position
+    var aphiaToPos = {};
+    root.descendants().forEach(function(d) {
+      aphiaToPos[d.data.data.AphiaID] = { x: d.x, y: d.y };
+    });
+
+    var arrowData = [];
+    root.descendants().forEach(function(d) {
+      var nd = d.data.data;
+      if (!nd || nd.status === "accepted") return;
+      var ct = classifyChange(nd);
+      if (ct !== changeMode) return;
+      if (nd.valid_AphiaID == null || nd.valid_AphiaID === nd.AphiaID) return;
+      var targetPos = aphiaToPos[nd.valid_AphiaID];
+      if (!targetPos) return; // target not currently rendered — skip
+      arrowData.push({
+        sourceX: d.x, sourceY: d.y,
+        targetX: targetPos.x, targetY: targetPos.y,
+        type: ct,
+        name: nd.name,
+        validName: nd.valid_name,
+        aphiaId: nd.AphiaID,
+      });
+    });
+
+    arrowData.forEach(function(ad) {
+      var color = ad.type === "phylo" ? "#0d6efd" : ad.type === "rank" ? "#6f42c1" : "#fd7e14";
+      var markerId = "arrowhead-" + ad.type;
+
+      // Convert tree coords to screen coords (tree is horizontal: d.x = row, d.y = column)
+      var sx = ad.sourceY + offsetX;
+      var sy = ad.sourceX + offsetY;
+      var tx = ad.targetY + offsetX;
+      var ty = ad.targetX + offsetY;
+
+      // Curved path with a mid control that arcs based on horizontal distance
+      var dx = tx - sx;
+      var cx1 = sx + dx * 0.4;
+      var cx2 = tx - dx * 0.4;
+      g.append("path")
+        .attr("class", "ghost-link")
+        .attr("d", "M" + sx + "," + sy
+          + " C" + cx1 + "," + sy
+          + " " + cx2 + "," + ty
+          + " " + (tx - 10) + "," + ty)
+        .attr("stroke", color)
+        .attr("fill", "none")
+        .attr("marker-end", "url(#" + markerId + ")")
+        .style("pointer-events", "stroke")
+        .on("mouseenter", function(event) {
+          var tt = document.getElementById("tooltip");
+          tt.innerHTML = '<div class="tt-name">' + ad.name + '</div>'
+            + '<div class="tt-rank" style="color:' + color + ';">' + ad.type + ' change → ' + (ad.validName || "?") + '</div>';
+          tt.style.display = "block";
+          tt.style.left = (event.clientX + 12) + "px";
+          tt.style.top = (event.clientY - 10) + "px";
+        })
+        .on("mouseleave", hideTooltip);
+    });
+
+    // Highlight every node that participates in an arrow (either old or new end)
+    var highlighted = new Set();
+    arrowData.forEach(function(ad) {
+      highlighted.add(ad.aphiaId);
+      // Find target AphiaID by reverse-looking up the position (cheaper: recompute)
+    });
+    // Collect target AphiaIDs directly
+    root.descendants().forEach(function(d) {
+      var nd = d.data.data;
+      if (nd && nd.status !== "accepted" && classifyChange(nd) === changeMode
+          && nd.valid_AphiaID != null && aphiaToPos[nd.valid_AphiaID]) {
+        highlighted.add(nd.valid_AphiaID);
+      }
+    });
+    nodes.filter(function(d) { return highlighted.has(d.data.data.AphiaID); })
+      .attr("opacity", 1)
+      .select("circle").attr("opacity", 1);
+  }
+
+  // ── Search-focus arrows ──
+  // When user navigates via search, draw arrows between the searched node and its related changes.
+  if (searchFocusIds.size > 0 && searchArrows.length > 0) {
+    var aphiaToPos2 = {};
+    root.descendants().forEach(function(d) {
+      aphiaToPos2[d.data.data.AphiaID] = { x: d.x, y: d.y };
+    });
+
+    searchArrows.forEach(function(sa) {
+      var srcPos = aphiaToPos2[sa.sourceId];
+      var tgtPos = aphiaToPos2[sa.targetId];
+      if (!srcPos || !tgtPos) return;
+      var color = sa.type === "phylo" ? "#0d6efd" : sa.type === "rank" ? "#6f42c1" : "#fd7e14";
+      var markerId = "arrowhead-" + sa.type;
+
+      var sx = srcPos.y + offsetX, sy = srcPos.x + offsetY;
+      var tx = tgtPos.y + offsetX, ty = tgtPos.x + offsetY;
+      var dx = tx - sx;
+      var cx1 = sx + dx * 0.4, cx2 = tx - dx * 0.4;
+
+      g.append("path")
+        .attr("class", "ghost-link")
+        .attr("d", "M" + sx + "," + sy
+          + " C" + cx1 + "," + sy
+          + " " + cx2 + "," + ty
+          + " " + (tx - 10) + "," + ty)
+        .attr("stroke", color)
+        .attr("stroke-width", 2.5)
+        .attr("fill", "none")
+        .attr("marker-end", "url(#" + markerId + ")");
+    });
+  }
+
+  // ── Labels ──
+  nodes.append("text")
+    .attr("dy", "0.35em")
+    .attr("x", function(d) { return d.children ? -(childCountSize(d.data.data) + 6) : childCountSize(d.data.data) + 6; })
+    .attr("text-anchor", function(d) { return d.children ? "end" : "start"; })
+    .style("font-size", "11px")
+    .style("font-style", "italic")
+    .style("fill", function(d) {
+      if (selectedNode && selectedNode.AphiaID === d.data.data.AphiaID) return "#000";
+      return d.data.data.status === "accepted" ? "#333" : "#888";
+    })
+    .style("font-weight", function(d) {
+      return selectedNode && selectedNode.AphiaID === d.data.data.AphiaID ? "700" : d.data.data.status === "accepted" ? "500" : "400";
+    })
+    .text(function(d) {
+      var name = d.data.data.name;
+      return name.length > 25 ? name.substring(0, 22) + "\u2026" : name;
+    });
+
+  // Collapse indicator: show child count INSIDE the circle
+  nodes.filter(function(d) { return !d.data.data._expanded && (d.data.data._childrenLoaded ? d.data.data.children.length > 0 : isHighRank(d.data.data.rank)); })
+    .append("text")
+    .attr("dy", "0.35em")
+    .attr("text-anchor", "middle")
+    .style("font-size", function(d) {
+      var r = childCountSize(d.data.data);
+      return Math.max(7, r - 1) + "px";
+    })
+    .style("fill", "#fff")
+    .style("font-weight", "bold")
+    .style("pointer-events", "none")
+    .text(function(d) { return d.data.data._childrenLoaded ? d.data.data.children.length : "\u2026"; });
+}
+
+function drawRadialLayout(visTree) {
+  var container = document.getElementById("viz-container");
+  var rect = container.getBoundingClientRect();
+  var radius = Math.min(rect.width, rect.height) / 2 - 80;
+  var root = d3.hierarchy(visTree, function(d) { return d.children; });
+  d3.tree().size([2 * Math.PI, radius]).separation(function(a,b) { return (a.parent === b.parent ? 1 : 2) / a.depth; })(root);
+  var cx = rect.width / 2, cy = rect.height / 2;
+  g.selectAll(".link").data(root.links()).join("path").attr("class", "link")
+    .attr("d", d3.linkRadial().angle(function(d){return d.x;}).radius(function(d){return d.y;}))
+    .attr("transform", "translate(" + cx + "," + cy + ")");
+  var nodes = g.selectAll(".node").data(root.descendants()).join("g").attr("class", "node")
+    .attr("transform", function(d) {
+      var angle = d.x - Math.PI / 2;
+      return "translate(" + (cx + d.y * Math.cos(angle)) + "," + (cy + d.y * Math.sin(angle)) + ")";
+    })
+    .on("click", function(event, d) {
+      event.stopPropagation();
+      var el = this;
+      if (el._clickTimer) clearTimeout(el._clickTimer);
+      el._clickTimer = setTimeout(function() {
+        el._clickTimer = null;
+        selectNode(d.data.data);
+        renderTreePanel();
+        updateVisualization();
+      }, 250);
+    })
+    .on("dblclick", async function(event, d) {
+      event.stopPropagation();
+      if (this._clickTimer) { clearTimeout(this._clickTimer); this._clickTimer = null; }
+      var node = d.data.data;
+      if (!node._childrenLoaded) await loadChildren(node);
+      node._expanded = !node._expanded;
+      selectNode(node);
+      renderTreePanel();
+      updateVisualization();
+    })
+    .on("mouseenter", function(event, d) { showTooltip(event, d.data.data); })
+    .on("mouseleave", hideTooltip);
+  nodes.append("circle").attr("r", function(d){return rankSize(d.data.data.rank);})
+    .attr("fill", function(d){return getStatusColor(d.data.data.status);}).attr("stroke", "#fff").attr("stroke-width", 2);
+  nodes.append("text").attr("dy", "0.35em")
+    .attr("x", function(d) { return (d.x > Math.PI ? -1 : 1) * (rankSize(d.data.data.rank) + 6); })
+    .attr("text-anchor", function(d) { return d.x > Math.PI ? "end" : "start"; })
+    .attr("transform", function(d) { return d.x > Math.PI ? "rotate(180)" : null; })
+    .style("font-size", "10px").style("font-style", "italic")
+    .text(function(d) { var n = d.data.data.name; return n.length > 20 ? n.substring(0,17)+"\u2026" : n; });
+}
+
+function drawSunburstLayout(visTree) {
+  var container = document.getElementById("viz-container");
+  var rect = container.getBoundingClientRect();
+  var radius = Math.min(rect.width, rect.height) / 2 - 20;
+  var root = d3.hierarchy(visTree, function(d){return d.children;})
+    .sum(function(d){return d.children && d.children.length > 0 ? 0 : 1;})
+    .sort(function(a,b){return b.value - a.value;});
+  d3.partition().size([2 * Math.PI, radius])(root);
+  var cx = rect.width/2, cy = rect.height/2;
+  var arc = d3.arc().startAngle(function(d){return d.x0;}).endAngle(function(d){return d.x1;})
+    .innerRadius(function(d){return d.y0;}).outerRadius(function(d){return d.y1-1;});
+  g.selectAll("path").data(root.descendants().filter(function(d){return d.depth>0;}))
+    .join("path").attr("transform","translate("+cx+","+cy+")").attr("d",arc)
+    .attr("fill",function(d){return getStatusColor(d.data.data.status);})
+    .attr("stroke","#fff").attr("stroke-width",0.5).attr("opacity",0.85).style("cursor","pointer")
+    .on("click",function(event,d){
+      event.stopPropagation();
+      var el=this;
+      if(el._clickTimer)clearTimeout(el._clickTimer);
+      el._clickTimer=setTimeout(function(){el._clickTimer=null;selectNode(d.data.data);renderTreePanel();updateVisualization();},250);
+    })
+    .on("dblclick",async function(event,d){
+      event.stopPropagation();
+      if(this._clickTimer){clearTimeout(this._clickTimer);this._clickTimer=null;}
+      var node=d.data.data;
+      if(!node._childrenLoaded)await loadChildren(node);
+      node._expanded=!node._expanded;selectNode(node);renderTreePanel();updateVisualization();
+    })
+    .on("mouseenter",function(event,d){showTooltip(event,d.data.data);}).on("mouseleave",hideTooltip);
+  g.append("text").attr("x",cx).attr("y",cy-8).attr("text-anchor","middle")
+    .style("font-size","14px").style("font-weight","bold").style("font-style","italic").text("Ostracoda");
+  g.append("text").attr("x",cx).attr("y",cy+10).attr("text-anchor","middle")
+    .style("font-size","11px").style("fill","#888").text("Latreille, 1806");
+  var arcLabel=d3.arc().startAngle(function(d){return d.x0;}).endAngle(function(d){return d.x1;})
+    .innerRadius(function(d){return(d.y0+d.y1)/2;}).outerRadius(function(d){return(d.y0+d.y1)/2;});
+  g.selectAll(".arc-label").data(root.descendants().filter(function(d){return d.depth>0&&(d.x1-d.x0)>0.1;}))
+    .join("text").attr("class","arc-label")
+    .attr("transform",function(d){var c=arcLabel.centroid(d);return "translate("+(c[0]+cx)+","+(c[1]+cy)+")";})
+    .attr("text-anchor","middle").attr("dominant-baseline","central")
+    .style("font-size",function(d){return d.depth<3?"10px":"8px";}).style("font-style","italic").style("fill","#333").style("pointer-events","none")
+    .text(function(d){var n=d.data.data.name,a=d.x1-d.x0,m=Math.floor(a*20);return n.length>m?n.substring(0,m-1)+"\u2026":n;});
+}
+
+function highlightInViz(node) {
+  if (!g) return;
+  g.selectAll(".node circle").attr("stroke", function(d) {
+    return d.data && d.data.data && d.data.data.AphiaID === node.AphiaID ? "#000" : "#fff";
+  }).attr("stroke-width", function(d) {
+    return d.data && d.data.data && d.data.data.AphiaID === node.AphiaID ? 3 : 2;
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// Tooltip
+// ════════════════════════════════════════════════════════════
+function showTooltip(event, node) {
+  var tt = document.getElementById("tooltip");
+  var ct = classifyChange(node);
+  var changeHtml = "";
+  if (ct) {
+    var ctColor = ct === "phylo" ? "var(--phylo-color)" : ct === "rank" ? "var(--rank-color)" : "var(--namefix-color)";
+    var ctLabel = ct === "phylo" ? "Phylogenetic reclassification" : ct === "rank" ? "Rank change" : "Name fix";
+    changeHtml = '<div style="margin-top:4px;font-size:11px;color:' + ctColor + ';">' + ctLabel + '</div>';
+    if (node.valid_name && node.valid_name !== node.name) {
+      changeHtml += '<div style="font-size:11px;color:var(--text-muted);">&rarr; ' + node.valid_name + '</div>';
+    }
+  }
+  tt.innerHTML = '<div class="tt-name">' + node.name + '</div>'
+    + '<div class="tt-rank">' + (node.rank || "?") + ' \u00b7 AphiaID ' + node.AphiaID + '</div>'
+    + '<div class="tt-status" style="color:' + getStatusColor(node.status) + '">' + (node.status || "Unknown") + '</div>'
+    + changeHtml
+    + (!node._childrenLoaded ? '<div style="margin-top:4px;font-size:10px;opacity:0.6;">Double-click to load children</div>' : '');
+  tt.style.display = "block";
+  tt.style.left = (event.clientX + 12) + "px";
+  tt.style.top = (event.clientY - 10) + "px";
+}
+
+function hideTooltip() { document.getElementById("tooltip").style.display = "none"; }
+
+// ════════════════════════════════════════════════════════════
+// Filter chips
+// ════════════════════════════════════════════════════════════
+function updateFilterChips() {
+  var bar = document.getElementById("filter-bar");
+  bar.innerHTML = "";
+  var sorted = Array.from(allStatuses).sort();
+  sorted.forEach(function(status) {
+    var chip = document.createElement("div");
+    chip.className = "filter-chip" + (activeFilters.size === 0 || activeFilters.has(status) ? " active" : " dimmed");
+    var dot = document.createElement("span");
+    dot.className = "dot"; dot.style.background = getStatusColor(status);
+    chip.appendChild(dot);
+    chip.appendChild(document.createTextNode(status));
+    chip.addEventListener("click", function() {
+      if (activeFilters.has(status)) activeFilters.delete(status);
+      else activeFilters.add(status);
+      if (activeFilters.size === allStatuses.size) activeFilters.clear();
+      updateFilterChips(); renderTreePanel(); updateVisualization();
+    });
+    bar.appendChild(chip);
+  });
+  if (activeFilters.size > 0) {
+    var clear = document.createElement("div");
+    clear.className = "filter-chip"; clear.textContent = "Clear filters"; clear.style.fontWeight = "600";
+    clear.addEventListener("click", function() { activeFilters.clear(); updateFilterChips(); renderTreePanel(); updateVisualization(); });
+    bar.appendChild(clear);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// Search
+// ════════════════════════════════════════════════════════════
+var searchTimeout = null;
+document.getElementById("search-input").addEventListener("input", function(e) {
+  clearTimeout(searchTimeout);
+  var query = e.target.value.trim();
+  if (query.length < 2) { document.getElementById("search-results").style.display = "none"; return; }
+  searchTimeout = setTimeout(async function() {
+    var results = await searchTaxa(query);
+    var container = document.getElementById("search-results");
+    if (results.length === 0) {
+      container.innerHTML = '<div class="search-item"><div class="meta">No Ostracoda taxa found</div></div>';
+    } else {
+      container.innerHTML = results.slice(0, 15).map(function(r) {
+        return '<div class="search-item" onclick="handleSearchSelect(' + r.AphiaID + ')">'
+          + '<div class="name">' + r.scientificname + '</div>'
+          + '<div class="meta">' + (r.rank||"?") + ' \u00b7 ' + r.status + ' \u00b7 AphiaID ' + r.AphiaID + '</div></div>';
+      }).join("");
+    }
+    container.style.display = "block";
+  }, 400);
+});
+document.addEventListener("click", function(e) {
+  if (!e.target.closest("#search-box") && !e.target.closest("#search-results"))
+    document.getElementById("search-results").style.display = "none";
+});
+async function handleSearchSelect(aphiaId) {
+  document.getElementById("search-results").style.display = "none";
+  document.getElementById("search-input").value = "";
+  await navigateToAphia(aphiaId);
+}
+
+// ════════════════════════════════════════════════════════════
+// Footer stats
+// ════════════════════════════════════════════════════════════
+function updateFooterStats() {
+  var el = document.getElementById("footer-stats");
+  var total = nodeMap.size, accepted = 0, unaccepted = 0, synonymTotal = 0;
+  nodeMap.forEach(function(n) {
+    if (n.status === "accepted") accepted++; else unaccepted++;
+    synonymTotal += (n.synonyms || []).length;
+  });
+  el.innerHTML = '<span class="stat-item"><span class="stat-dot" style="background:#198754"></span> ' + accepted + ' accepted</span>'
+    + '<span class="stat-item"><span class="stat-dot" style="background:#dc3545"></span> ' + unaccepted + ' unaccepted</span>'
+    + '<span class="stat-item"><span class="stat-dot" style="background:#fd7e14"></span> ' + synonymTotal + ' synonyms</span>'
+    + '<span class="stat-item">Total loaded: ' + total + '</span>';
+}
+
+// ════════════════════════════════════════════════════════════
+// Bootstrap
+// ════════════════════════════════════════════════════════════
+async function init() {
+  initVisualization();
+  document.getElementById("loading-text").textContent = "Loading local dataset...";
+  try {
+    await loadLocalData();
+  } catch (e) {
+    document.getElementById("loading-text").textContent = "Failed to load " + DATA_URL + ": " + e.message;
+    return;
+  }
+  var rootRecord = fetchRecord(OSTRACODA_ID);
+  if (!rootRecord) { document.getElementById("loading-text").textContent = "Root AphiaID " + OSTRACODA_ID + " not found in local data"; return; }
+  rootNode = createNode(rootRecord);
+  allStatuses.add(rootNode.status);
+
+  // Expand tree down to Family level (Family nodes visible but not expanded).
+  async function expandToFamily(node) {
+    await loadChildren(node);
+    if (EXPAND_RANKS.has(node.rank) || !node.rank) {
+      node._expanded = true;
+      var accepted = node.children.filter(function(c) { return c.status === "accepted"; });
+      for (var i = 0; i < accepted.length; i++) {
+        document.getElementById("loading-text").textContent = "Loading " + accepted[i].name + "...";
+        await expandToFamily(accepted[i]);
+      }
+    }
+  }
+
+  document.getElementById("loading-text").textContent = "Building tree to Family level...";
+  await expandToFamily(rootNode);
+
+  document.getElementById("loading-overlay").style.display = "none";
+  renderTreePanel();
+  updateVisualization();
+  updateFilterChips();
+  updateFooterStats();
+  resetZoom();
+  selectNode(rootNode);
+  setInterval(updateFooterStats, 2000);
+}
+
+init();
+</script>
+</body>
+</html>
