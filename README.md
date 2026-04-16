@@ -6,7 +6,6 @@ Interactive D3.js visualization for exploring the taxonomy and nomenclatural cha
 
 Open this URL: https://peiyangg.github.io/Ostracoda_taxonomy_explorer/
 
-```
 
 ## Features
 
