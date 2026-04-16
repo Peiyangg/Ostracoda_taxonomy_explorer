@@ -4,11 +4,8 @@ Interactive D3.js visualization for exploring the taxonomy and nomenclatural cha
 
 ## Live demo
 
-Open `index.html` via GitHub Pages, or serve locally:
+Open this URL: https://peiyangg.github.io/Ostracoda_taxonomy_explorer/
 
-```bash
-python3 -m http.server 8000
-# then open http://localhost:8000
 ```
 
 ## Features
@@ -24,19 +21,6 @@ python3 -m http.server 8000
 - **Status filters** — filter nodes by accepted/unaccepted status
 - **Detail panel** — view full record info, classification, environment, and children summary
 
-## Dataset
-
-`data/ostracoda_all_records.json` contains 11,586 records fetched from the WoRMS REST API via recursive `AphiaChildrenByAphiaID` calls starting from Ostracoda (AphiaID: 1078).
-
-To regenerate the data:
-
-```bash
-cd data
-pip install requests
-python download_all_statuses.py
-```
-
-This takes ~15-25 minutes due to API rate limiting.
 
 ## Data source
 
